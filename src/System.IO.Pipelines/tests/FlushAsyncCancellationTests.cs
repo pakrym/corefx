@@ -307,6 +307,32 @@ namespace System.IO.Pipelines.Tests
             Assert.False(awaiterIsCompleted);
             Assert.True(onCompletedCalled);
         }
+
+        [Fact]
+        public async Task AdvanceBetweenGetResultAndOnCompleted()
+        {
+            PipeWriter buffer = Pipe.Writer.WriteEmpty(MaximumSizeHigh);
+
+            ValueTaskAwaiter<FlushResult> awaiter = buffer.FlushAsync().GetAwaiter();
+            awaiter.OnCompleted(() => { });
+            bool awaiterIsCompleted = awaiter.IsCompleted;
+            Pipe.Writer.CancelPendingFlush();
+            bool awaiterIsCompletedAfterCancel = awaiter.IsCompleted;
+
+            var result = await Pipe.Reader.ReadAsync();
+            Pipe.Reader.AdvanceTo(result.Buffer.End);
+
+            Pipe.Writer.WriteEmpty(1);
+
+            var flushTask = buffer.FlushAsync();
+
+            result = await Pipe.Reader.ReadAsync();
+            Pipe.Reader.AdvanceTo(result.Buffer.End);
+
+            Assert.True(flushTask == new ValueTask<FlushResult>(flushTask.Result));
+            Assert.False(awaiterIsCompleted);
+            Assert.True(awaiterIsCompletedAfterCancel);
+        }
     }
 
     public static class TestWriterExtensions
