@@ -12,7 +12,6 @@ namespace System.IO.Pipelines.Tests
     {
         private class DisposeTrackingBufferPool : TestMemoryPool
         {
-            public int ReturnedBlocks { get; set; }
             public int DisposedBlocks { get; set; }
             public int CurrentlyRentedBlocks { get; set; }
 
@@ -31,8 +30,6 @@ namespace System.IO.Pipelines.Tests
 
                 private readonly DisposeTrackingBufferPool _bufferPool;
 
-                private int _refCount = 1;
-
                 public DisposeTrackingMemoryManager(byte[] array, DisposeTrackingBufferPool bufferPool)
                 {
                     _array = array;
@@ -44,11 +41,8 @@ namespace System.IO.Pipelines.Tests
 
                 public bool IsDisposed => _array == null;
 
-                protected bool IsRetained => _refCount > 0;
-
                 public override MemoryHandle Pin(int elementIndex = 0)
                 {
-                    _refCount++;
                     throw new NotImplementedException();
                 }
 
@@ -62,11 +56,8 @@ namespace System.IO.Pipelines.Tests
 
                 protected override void Dispose(bool disposing)
                 {
-                    if (IsRetained)
-                    {
-                        throw new InvalidOperationException();
-                    }
                     _bufferPool.DisposedBlocks++;
+                    _bufferPool.CurrentlyRentedBlocks--;
 
                     _array = null;
                 }
@@ -80,15 +71,11 @@ namespace System.IO.Pipelines.Tests
 
                 public override void Unpin()
                 {
-                    _bufferPool.ReturnedBlocks++;
-                    _bufferPool.CurrentlyRentedBlocks--;
-                    _refCount--;
                 }
             }
         }
 
         [Fact]
-        [ActiveIssue(28640)]
         public async Task AdvanceToEndReturnsAllBlocks()
         {
             var pool = new DisposeTrackingBufferPool();
@@ -106,12 +93,10 @@ namespace System.IO.Pipelines.Tests
             pipe.Reader.AdvanceTo(readResult.Buffer.End);
 
             Assert.Equal(0, pool.CurrentlyRentedBlocks);
-            Assert.Equal(0, pool.DisposedBlocks);
-            Assert.Equal(3, pool.ReturnedBlocks);
+            Assert.Equal(3, pool.DisposedBlocks);
         }
 
         [Fact]
-        [ActiveIssue(28640)]
         public async Task CanWriteAfterReturningMultipleBlocks()
         {
             var pool = new DisposeTrackingBufferPool();
@@ -137,12 +122,10 @@ namespace System.IO.Pipelines.Tests
             await pipe.Writer.WriteAsync(new byte[writeSize]);
 
             Assert.Equal(1, pool.CurrentlyRentedBlocks);
-            Assert.Equal(0, pool.DisposedBlocks);
-            Assert.Equal(2, pool.ReturnedBlocks);
+            Assert.Equal(2, pool.DisposedBlocks);
         }
 
         [Fact]
-        [ActiveIssue(28640)]
         public async Task MultipleCompleteReaderWriterCauseDisposeOnlyOnce()
         {
             var pool = new DisposeTrackingBufferPool();
@@ -152,17 +135,14 @@ namespace System.IO.Pipelines.Tests
 
             readerWriter.Writer.Complete();
             readerWriter.Reader.Complete();
-            Assert.Equal(1, pool.ReturnedBlocks);
-            Assert.Equal(0, pool.DisposedBlocks);
+            Assert.Equal(1, pool.DisposedBlocks);
 
             readerWriter.Writer.Complete();
             readerWriter.Reader.Complete();
-            Assert.Equal(1, pool.ReturnedBlocks);
-            Assert.Equal(0, pool.DisposedBlocks);
+            Assert.Equal(1, pool.DisposedBlocks);
         }
 
         [Fact]
-        [ActiveIssue(28640)]
         public async Task RentsMinimumSegmentSize()
         {
             var pool = new DisposeTrackingBufferPool();
@@ -185,7 +165,6 @@ namespace System.IO.Pipelines.Tests
         }
 
         [Fact]
-        [ActiveIssue(28640)]
         public void ReturnsWriteHeadOnComplete()
         {
             var pool = new DisposeTrackingBufferPool();
@@ -195,12 +174,10 @@ namespace System.IO.Pipelines.Tests
             pipe.Reader.Complete();
             pipe.Writer.Complete();
             Assert.Equal(0, pool.CurrentlyRentedBlocks);
-            Assert.Equal(1, pool.ReturnedBlocks);
-            Assert.Equal(0, pool.DisposedBlocks);
+            Assert.Equal(1, pool.DisposedBlocks);
         }
 
         [Fact]
-        [ActiveIssue(28640)]
         public void ReturnsWriteHeadWhenRequestingLargerBlock()
         {
             var pool = new DisposeTrackingBufferPool();
@@ -211,8 +188,7 @@ namespace System.IO.Pipelines.Tests
             pipe.Reader.Complete();
             pipe.Writer.Complete();
             Assert.Equal(0, pool.CurrentlyRentedBlocks);
-            Assert.Equal(2, pool.ReturnedBlocks);
-            Assert.Equal(0, pool.DisposedBlocks);
+            Assert.Equal(2, pool.DisposedBlocks);
         }
 
         [Fact]
